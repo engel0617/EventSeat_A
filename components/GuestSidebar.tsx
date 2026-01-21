@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo } from 'react';
 import { Guest, RsvpStatus, Table } from '../types';
 import { Button } from './Button';
 import { generateGuestList } from '../services/geminiService';
-import { Users, UserPlus, Sparkles, Search, Trash2, Upload, AlertCircle, CheckCircle2, XCircle, HelpCircle, FileSpreadsheet, User, Filter, GripVertical, Zap, Download } from 'lucide-react';
+import { Users, UserPlus, Sparkles, Search, Trash2, Upload, AlertCircle, CheckCircle2, XCircle, HelpCircle, FileSpreadsheet, User, Filter, GripVertical, Zap, Download, Key } from 'lucide-react';
 import Papa from 'papaparse';
 
 interface GuestSidebarProps {
@@ -47,6 +47,7 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [eventDesc, setEventDesc] = useState('一場溫馨的婚禮');
   const [guestCount, setGuestCount] = useState(10);
+  const [apiKey, setApiKey] = useState('');
 
   // Import
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -93,7 +94,7 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
   const handleGenerate = async () => {
     setIsGenerating(true);
     try {
-      const generated = await generateGuestList(eventDesc, guestCount);
+      const generated = await generateGuestList(eventDesc, guestCount, apiKey);
       // Augment AI data with defaults
       const augmented = generated.map(g => ({
         ...g,
@@ -103,8 +104,8 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
       }));
       onBulkAddGuests(augmented);
       setActiveTab('list');
-    } catch (e) {
-      alert("AI 生成失敗");
+    } catch (e: any) {
+      alert("AI 生成失敗: " + (e.message || "未知錯誤"));
     } finally {
       setIsGenerating(false);
     }
@@ -511,6 +512,22 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
               <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-purple-600" /> AI 快速生成名單
               </h3>
+
+              {/* API Key Input */}
+              <div className="bg-purple-50 p-3 rounded-md border border-purple-100">
+                  <label className="text-xs text-purple-800 font-medium mb-1 flex items-center gap-1"><Key className="w-3 h-3"/> API Key (選填)</label>
+                  <input
+                    type="password"
+                    placeholder="若無環境變數，請在此輸入 Gemini API Key"
+                    className="w-full px-3 py-2 bg-white border border-purple-200 rounded-md text-sm focus:border-purple-500 outline-none text-slate-600 placeholder:text-slate-400"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                  <p className="text-[10px] text-purple-600 mt-1 opacity-70">
+                      您的 Key 僅用於此請求，不會被儲存。
+                  </p>
+              </div>
+              
               <p className="text-xs text-slate-500">
                 描述你的活動，讓 Gemini 幫你產生含有人設、關係與屬性的測試資料。
               </p>

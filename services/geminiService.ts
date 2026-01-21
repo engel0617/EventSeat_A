@@ -1,15 +1,15 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Guest } from "../types";
 
-const API_KEY = process.env.API_KEY || '';
+export const generateGuestList = async (eventDescription: string, count: number, apiKey?: string): Promise<Partial<Guest>[]> => {
+  const key = apiKey || process.env.API_KEY;
 
-// Initialize client (will fail gracefully in UI if key is missing, handled by caller)
-const ai = new GoogleGenAI({ apiKey: API_KEY });
-
-export const generateGuestList = async (eventDescription: string, count: number): Promise<Partial<Guest>[]> => {
-  if (!API_KEY) {
-    throw new Error("API Key is missing");
+  if (!key) {
+    throw new Error("API Key is missing. Please enter it in the input box.");
   }
+
+  // Initialize client here with the specific key
+  const ai = new GoogleGenAI({ apiKey: key });
 
   const model = "gemini-3-flash-preview";
 
