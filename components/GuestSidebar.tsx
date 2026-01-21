@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo } from 'react';
 import { Guest, RsvpStatus, Table } from '../types';
 import { Button } from './Button';
 import { generateGuestList } from '../services/geminiService';
-import { Users, UserPlus, Sparkles, Search, Trash2, Upload, AlertCircle, CheckCircle2, XCircle, HelpCircle, FileSpreadsheet, User, Filter, GripVertical, Zap, Download, Key } from 'lucide-react';
+import { Users, UserPlus, Sparkles, Search, Trash2, Upload, AlertCircle, CheckCircle2, XCircle, HelpCircle, FileSpreadsheet, User, Filter, GripVertical, Zap, Download, Key, ShieldAlert, Layers } from 'lucide-react';
 import Papa from 'papaparse';
 
 interface GuestSidebarProps {
@@ -16,7 +16,11 @@ interface GuestSidebarProps {
   onUpdateGuest: (id: string, updates: Partial<Guest>) => void;
   activeFilterTag: string | null;
   onSetFilterTag: (tag: string | null) => void;
+  activeFilterCategory: string | null;
+  onSetFilterCategory: (category: string | null) => void;
   onOpenAutoAssign: () => void;
+  searchTerm: string;
+  onSearchChange: (term: string) => void;
 }
 
 export const GuestSidebar: React.FC<GuestSidebarProps> = ({
@@ -30,18 +34,20 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
   onUpdateGuest,
   activeFilterTag,
   onSetFilterTag,
-  onOpenAutoAssign
+  activeFilterCategory,
+  onSetFilterCategory,
+  onOpenAutoAssign,
+  searchTerm,
+  onSearchChange
 }) => {
   const [activeTab, setActiveTab] = useState<'list' | 'add' | 'import'>('list');
-  
-  // Search & Filter
-  const [searchTerm, setSearchTerm] = useState('');
   const [filterMode, setFilterMode] = useState<'all' | 'confirmed' | 'pending' | 'unassigned'>('all');
 
   // New Guest Form
   const [newGuestName, setNewGuestName] = useState('');
   const [newGuestCategory, setNewGuestCategory] = useState('一般賓客');
   const [newGuestTags, setNewGuestTags] = useState(''); // Comma separated
+  const [newGuestAvoid, setNewGuestAvoid] = useState(''); // Relationship: Avoid
 
   // AI
   const [isGenerating, setIsGenerating] = useState(false);
@@ -76,18 +82,29 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
     return Array.from(tags);
   }, [guests]);
 
+  // Collect all unique categories for filter pills
+  const allCategories = useMemo(() => {
+    return Array.from(new Set(guests.map(g => g.category))).filter(Boolean);
+  }, [guests]);
+
   const handleManualAdd = (e: React.FormEvent) => {
     e.preventDefault();
     if (newGuestName.trim()) {
+      const relationships = [];
+      if (newGuestAvoid.trim()) {
+        relationships.push(`Avoid:${newGuestAvoid.trim()}`);
+      }
+
       onAddGuest({ 
         name: newGuestName, 
         category: newGuestCategory,
         tags: newGuestTags.split(',').map(t => t.trim()).filter(Boolean),
         rsvpStatus: 'pending',
-        relationships: []
+        relationships: relationships
       });
       setNewGuestName('');
       setNewGuestTags('');
+      setNewGuestAvoid('');
     }
   };
 
@@ -114,7 +131,7 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
   const handleDownloadSample = () => {
     // BOM for Excel to read UTF-8 correctly
     const bom = "\uFEFF";
-    const csvContent = "姓名,分類,RSVP,標籤\n王大明,男方親友,已確認,\"素食, VIP\"\n陳小美,女方親友,未定,伴娘\n張三,公司同事,已確認,";
+    const csvContent = "姓名,分類,RSVP,標籤,避嫌\n王大明,男方親友,已確認,\"素食, VIP\",陳小美\n陳小美,女方親友,未定,伴娘,王大明\n張三,公司同事,已確認,,";
     const blob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -133,13 +150,22 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
       skipEmptyLines: true,
       complete: (results) => {
         const rawData = results.data as any[];
-        // Expected columns: Name, Category, RSVP, Tags
-        const parsedGuests = rawData.map(row => ({
-          name: row['Name'] || row['姓名'] || 'Unknown',
-          category: row['Category'] || row['分類'] || 'Uncategorized',
-          rsvpStatus: (row['RSVP'] === 'confirmed' || row['RSVP'] === '已確認') ? 'confirmed' : 'pending',
-          tags: (row['Tags'] || row['標籤'] || '').split(/[,，]/).map((t: string) => t.trim()).filter(Boolean)
-        }));
+        // Expected columns: Name, Category, RSVP, Tags, Avoid
+        const parsedGuests = rawData.map(row => {
+          const relationships = [];
+          const avoidTarget = row['Avoid'] || row['避嫌'] || row['Relationships'];
+          if (avoidTarget && typeof avoidTarget === 'string' && avoidTarget.trim()) {
+             relationships.push(`Avoid:${avoidTarget.trim()}`);
+          }
+
+          return {
+            name: row['Name'] || row['姓名'] || 'Unknown',
+            category: row['Category'] || row['分類'] || 'Uncategorized',
+            rsvpStatus: (row['RSVP'] === 'confirmed' || row['RSVP'] === '已確認') ? 'confirmed' : 'pending',
+            tags: (row['Tags'] || row['標籤'] || '').split(/[,，]/).map((t: string) => t.trim()).filter(Boolean),
+            relationships: relationships
+          };
+        });
 
         // Check duplicates
         const existingNames = new Set(guests.map(g => g.name));
@@ -160,7 +186,7 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
       onBulkAddGuests(finalImport.map(g => ({
         ...g,
         rsvpStatus: g.rsvpStatus as RsvpStatus,
-        relationships: []
+        // relationships already parsed
       })));
       setImportPreview([]);
       setDuplicates([]);
@@ -262,7 +288,7 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
                       placeholder="搜尋..."
                       className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                       value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
+                      onChange={(e) => onSearchChange(e.target.value)}
                     />
                   </div>
                   <Button 
@@ -300,6 +326,24 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
                      ))}
                   </div>
               )}
+
+              {/* Category Filters (Visual Highlight) */}
+              {allCategories.length > 0 && (
+                  <div className="flex gap-2 items-center overflow-x-auto pb-2 no-scroll border-t border-slate-50 pt-2">
+                     <Layers className="w-3 h-3 text-slate-400 shrink-0" />
+                     {allCategories.map(cat => (
+                         <button
+                            key={cat}
+                            onClick={() => onSetFilterCategory(activeFilterCategory === cat ? null : cat)}
+                            className={`whitespace-nowrap px-2 py-0.5 rounded text-[10px] border transition-colors
+                                ${activeFilterCategory === cat ? 'bg-blue-100 text-blue-700 border-blue-300 ring-1 ring-blue-300' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'}
+                            `}
+                         >
+                             {cat}
+                         </button>
+                     ))}
+                  </div>
+              )}
             </div>
 
             {/* List */}
@@ -314,6 +358,9 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
                   const assignedTable = guest.assignedSeatId 
                     ? tables.find(t => t.id === guest.assignedSeatId?.split('-')[0]) 
                     : null;
+
+                  const isDimmed = (activeFilterTag && !guest.tags.includes(activeFilterTag)) || 
+                                   (activeFilterCategory && guest.category !== activeFilterCategory);
                   
                   return (
                     <div
@@ -329,7 +376,7 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
                         }
                         ${selectedGuestId === guest.id ? 'ring-2 ring-indigo-500 border-indigo-500 bg-indigo-50 !opacity-100' : ''}
                         ${guest.rsvpStatus === 'declined' ? 'opacity-50 grayscale' : ''}
-                        ${activeFilterTag && !guest.tags.includes(activeFilterTag) ? 'opacity-20' : ''}
+                        ${isDimmed ? 'opacity-20' : ''}
                       `}
                     >
                       {/* Drag Handle Indicator */}
@@ -406,7 +453,7 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
                      <FileSpreadsheet className="w-4 h-4" /> 批次匯入
                  </h3>
                  <p className="text-xs text-indigo-700 mb-3">
-                     支援 CSV 格式。請確保欄位包含: Name (姓名), Category (分類). 可選: RSVP (已確認/未定), Tags (標籤, 以逗號分隔)。
+                     支援 CSV 格式。請確保欄位包含: Name (姓名), Category (分類). 可選: RSVP (已確認/未定), Tags (標籤, 以逗號分隔), <strong>Avoid (避嫌/不願同桌)</strong>。
                  </p>
                  
                  <div className="mb-4">
@@ -502,6 +549,16 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
                         onChange={(e) => setNewGuestTags(e.target.value)}
                     />
                   </div>
+              </div>
+              <div>
+                  <label className="text-xs text-slate-500 mb-1 flex items-center gap-1"><ShieldAlert className="w-3 h-3"/> 避免同桌對象 (輸入姓名)</label>
+                  <input
+                      type="text"
+                      placeholder="例: 陳小美"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md text-sm focus:border-indigo-500 outline-none placeholder:text-slate-300"
+                      value={newGuestAvoid}
+                      onChange={(e) => setNewGuestAvoid(e.target.value)}
+                  />
               </div>
               <Button type="submit" variant="secondary" className="w-full" disabled={!newGuestName}>
                 加入列表

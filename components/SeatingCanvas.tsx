@@ -12,6 +12,8 @@ interface SeatingCanvasProps {
   activeTableId: string | null;
   onGuestDrop: (guestId: string, tableId: string, seatIndex?: number) => void;
   activeFilterTag: string | null;
+  activeFilterCategory: string | null;
+  searchTerm: string;
 }
 
 export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
@@ -24,6 +26,8 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
   activeTableId,
   onGuestDrop,
   activeFilterTag,
+  activeFilterCategory,
+  searchTerm,
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
@@ -164,9 +168,24 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
          let opacity = 1;
          let ringColor = null;
 
-         if (activeFilterTag && guest) {
-             opacity = guest.tags.includes(activeFilterTag) ? 1 : 0.3;
-             if (guest.tags.includes(activeFilterTag)) ringColor = HIGHLIGHT_COLOR;
+         // Check filters (Tag and Search and Category)
+         if (activeFilterTag || searchTerm || activeFilterCategory) {
+            let isMatch = false;
+            
+            if (guest) {
+                const matchesTag = !activeFilterTag || guest.tags.includes(activeFilterTag);
+                const matchesCategory = !activeFilterCategory || guest.category === activeFilterCategory;
+                const term = searchTerm.toLowerCase();
+                const matchesSearch = !searchTerm || (
+                    guest.name.toLowerCase().includes(term) ||
+                    guest.category.toLowerCase().includes(term) ||
+                    guest.tags.some(t => t.toLowerCase().includes(term))
+                );
+                isMatch = matchesTag && matchesSearch && matchesCategory;
+            }
+
+            opacity = isMatch ? 1 : 0.3;
+            if (isMatch) ringColor = HIGHLIGHT_COLOR;
          }
 
          const seatG = parentG.append("g")
@@ -285,7 +304,7 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
             }
         }
     });
-  }, [tables, guests, selectedGuestId, activeTableId, onTableUpdate, onSeatClick, onTableSelect, activeFilterTag]);
+  }, [tables, guests, selectedGuestId, activeTableId, onTableUpdate, onSeatClick, onTableSelect, activeFilterTag, activeFilterCategory, searchTerm]);
 
   return (
     <div className="w-full h-full bg-slate-100 overflow-hidden relative cursor-grab active:cursor-grabbing canvas-container">

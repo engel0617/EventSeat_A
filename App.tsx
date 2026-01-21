@@ -3,8 +3,9 @@ import { Table, Guest, TableShape, Seat } from './types';
 import { GuestSidebar } from './components/GuestSidebar';
 import { SeatingCanvas } from './components/SeatingCanvas';
 import { AutoAssignModal } from './components/AutoAssignModal';
+import { SettingsModal } from './components/SettingsModal';
 import { Button } from './components/Button';
-import { Plus, Download, RotateCcw, Layout, Armchair, Trash, Settings2, Sparkles, ArrowRight, Printer, UploadCloud, RotateCw, Scaling } from 'lucide-react';
+import { Plus, Download, RotateCcw, Layout, Armchair, Trash, Settings2, Sparkles, ArrowRight, Printer, UploadCloud, RotateCw, Scaling, FileSpreadsheet } from 'lucide-react';
 
 // Utility for safe IDs
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -16,7 +17,15 @@ function App() {
   const [selectedGuestId, setSelectedGuestId] = useState<string | null>(null);
   const [activeTableId, setActiveTableId] = useState<string | null>(null);
   const [activeFilterTag, setActiveFilterTag] = useState<string | null>(null);
+  const [activeFilterCategory, setActiveFilterCategory] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState<string>(''); // Lifted state for search
   const importFileRef = useRef<HTMLInputElement>(null);
+  
+  // Settings State
+  const [mainTableRatio, setMainTableRatio] = useState(20);
+  const [defaultRoundSeats, setDefaultRoundSeats] = useState(8);
+  const [defaultRectSeats, setDefaultRectSeats] = useState(6);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
   // Modals
   const [isAutoAssignOpen, setIsAutoAssignOpen] = useState(false);
@@ -59,17 +68,49 @@ function App() {
   // Handlers
   const handleAddTable = (shape: TableShape) => {
     const id = generateId();
+    const seatCount = shape === TableShape.ROUND ? defaultRoundSeats : defaultRectSeats;
+    
+    // Find a non-overlapping position using spiral search
+    let cx = 400; // Center reference
+    let cy = 350;
+    let x = cx;
+    let y = cy;
+    const minDistance = 180; // Safe distance between tables (approx diameter + gap)
+
+    const isOverlapping = (checkX: number, checkY: number) => {
+      return tables.some(t => {
+        const dist = Math.sqrt(Math.pow(t.x - checkX, 2) + Math.pow(t.y - checkY, 2));
+        return dist < minDistance;
+      });
+    };
+
+    if (isOverlapping(x, y)) {
+       let angle = 0;
+       let radius = 50;
+       const maxIter = 500;
+       
+       for(let i = 0; i < maxIter; i++) {
+          x = cx + radius * Math.cos(angle);
+          y = cy + radius * Math.sin(angle);
+          if (!isOverlapping(x, y)) {
+             break;
+          }
+          angle += 0.5; // ~28 degrees
+          radius += 2; // Expand radius
+       }
+    }
+
     const newTable: Table = {
       id,
       label: `第 ${tables.length + 1} 桌`,
-      x: 300, 
-      y: 300,
+      x, 
+      y,
       shape,
       radius: shape === TableShape.ROUND ? 60 : undefined,
       width: shape === TableShape.RECTANGLE ? 140 : undefined,
       height: shape === TableShape.RECTANGLE ? 80 : undefined,
       rotation: 0,
-      seats: Array.from({ length: 8 }, (_, i) => ({ id: `${id}-${i}`, index: i, guestId: null }))
+      seats: Array.from({ length: seatCount }, (_, i) => ({ id: `${id}-${i}`, index: i, guestId: null }))
     };
     setTables([...tables, newTable]);
     setActiveTableId(id);
@@ -162,10 +203,47 @@ function App() {
       setGuests(newGuests);
   };
 
-  const handleExport = () => {
+  const handleExportJSON = () => {
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ tables, guests }, null, 2));
     const a = document.createElement('a');
     a.href = dataStr; a.download = `event-seating-${new Date().toISOString().split('T')[0]}.json`; a.click();
+  };
+
+  const handleExportCSV = () => {
+    const headers = ['姓名', '分類', 'RSVP', '標籤', '避嫌', '桌號'];
+    const rsvpMap: Record<string, string> = {
+        'confirmed': '已確認',
+        'pending': '未定',
+        'declined': '無法出席'
+    };
+
+    const rows = guests.map(g => {
+        const tableId = g.assignedSeatId ? g.assignedSeatId.split('-')[0] : null;
+        const table = tableId ? tables.find(t => t.id === tableId) : null;
+        const tableName = table ? table.label : '';
+        
+        const avoid = g.relationships
+            .filter(r => r.startsWith('Avoid:'))
+            .map(r => r.replace('Avoid:', ''))
+            .join('; ');
+
+        return [
+            g.name,
+            g.category,
+            rsvpMap[g.rsvpStatus] || g.rsvpStatus,
+            g.tags.join(', '),
+            avoid,
+            tableName
+        ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(','); // Escape quotes
+    });
+
+    const csvContent = "\uFEFF" + [headers.join(','), ...rows].join('\n'); // Add BOM for Excel
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `guest-list-export-${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -197,6 +275,10 @@ function App() {
 
   const activeTable = tables.find(t => t.id === activeTableId);
   const selectedGuest = guests.find(g => g.id === selectedGuestId);
+
+  // Calculate dynamic radius for main table based on settings
+  const standardRadius = 60;
+  const bigTableRadius = standardRadius * (1 + mainTableRatio / 100);
 
   return (
     <div className="flex flex-col h-screen w-full bg-slate-50">
@@ -230,11 +312,14 @@ function App() {
         </div>
         
         <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={() => setIsSettingsOpen(true)} icon={<Settings2 className="w-4 h-4" />}>基本設定</Button>
+            <div className="h-6 w-px bg-slate-200 mx-1"></div>
             <input type="file" ref={importFileRef} onChange={handleImport} accept=".json" className="hidden" />
             <Button variant="ghost" onClick={() => importFileRef.current?.click()} icon={<UploadCloud className="w-4 h-4" />}>匯入專案</Button>
             <Button variant="ghost" onClick={handlePrint} icon={<Printer className="w-4 h-4" />}>列印</Button>
             <Button variant="ghost" onClick={() => { if(window.confirm('確定清除?')) { setTables([]); setGuests([]); }}} icon={<RotateCcw className="w-4 h-4" />}>重置</Button>
-            <Button variant="secondary" onClick={handleExport} icon={<Download className="w-4 h-4" />}>匯出 JSON</Button>
+            <Button variant="secondary" onClick={handleExportCSV} icon={<FileSpreadsheet className="w-4 h-4" />}>匯出名單 (CSV)</Button>
+            <Button variant="secondary" onClick={handleExportJSON} icon={<Download className="w-4 h-4" />}>匯出 JSON</Button>
         </div>
       </header>
 
@@ -255,7 +340,11 @@ function App() {
             onUpdateGuest={(id, u) => setGuests(prev => prev.map(g => g.id === id ? { ...g, ...u } : g))}
             activeFilterTag={activeFilterTag}
             onSetFilterTag={setActiveFilterTag}
+            activeFilterCategory={activeFilterCategory}
+            onSetFilterCategory={setActiveFilterCategory}
             onOpenAutoAssign={() => setIsAutoAssignOpen(true)}
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
           />
         </aside>
 
@@ -300,18 +389,18 @@ function App() {
                                 <Button 
                                   size="sm"
                                   variant="ghost"
-                                  className={`flex-1 border transition-all ${activeTable.radius === 60 ? 'bg-indigo-100 border-indigo-600 text-indigo-900 font-bold ring-1 ring-indigo-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
-                                  onClick={() => setTables(prev => prev.map(t => t.id === activeTable.id ? {...t, radius: 60} : t))}
+                                  className={`flex-1 border transition-all ${activeTable.radius === standardRadius ? 'bg-indigo-100 border-indigo-600 text-indigo-900 font-bold ring-1 ring-indigo-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+                                  onClick={() => setTables(prev => prev.map(t => t.id === activeTable.id ? {...t, radius: standardRadius} : t))}
                                 >
                                   標準桌
                                 </Button>
                                 <Button 
                                   size="sm"
                                   variant="ghost"
-                                  className={`flex-1 border transition-all ${activeTable.radius === 72 ? 'bg-indigo-100 border-indigo-600 text-indigo-900 font-bold ring-1 ring-indigo-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
-                                  onClick={() => setTables(prev => prev.map(t => t.id === activeTable.id ? {...t, radius: 72} : t))}
+                                  className={`flex-1 border transition-all ${activeTable.radius && Math.abs(activeTable.radius - bigTableRadius) < 1 ? 'bg-indigo-100 border-indigo-600 text-indigo-900 font-bold ring-1 ring-indigo-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+                                  onClick={() => setTables(prev => prev.map(t => t.id === activeTable.id ? {...t, radius: bigTableRadius} : t))}
                                 >
-                                  大主桌
+                                  大主桌 (+{mainTableRatio}%)
                                 </Button>
                             </div>
                           </div>
@@ -378,6 +467,8 @@ function App() {
               activeTableId={activeTableId}
               onGuestDrop={handleGuestDrop}
               activeFilterTag={activeFilterTag}
+              activeFilterCategory={activeFilterCategory}
+              searchTerm={searchTerm}
             />
           </div>
         </main>
@@ -394,6 +485,18 @@ function App() {
 
       {/* Auto Assign Modal */}
       <AutoAssignModal isOpen={isAutoAssignOpen} onClose={() => setIsAutoAssignOpen(false)} tables={tables} guests={guests} onApply={handleAutoAssignApply} />
+      
+      {/* Global Settings Modal */}
+      <SettingsModal 
+        isOpen={isSettingsOpen} 
+        onClose={() => setIsSettingsOpen(false)} 
+        mainTableRatio={mainTableRatio}
+        setMainTableRatio={setMainTableRatio}
+        defaultRoundSeats={defaultRoundSeats}
+        setDefaultRoundSeats={setDefaultRoundSeats}
+        defaultRectSeats={defaultRectSeats}
+        setDefaultRectSeats={setDefaultRectSeats}
+      />
     </div>
   );
 }
