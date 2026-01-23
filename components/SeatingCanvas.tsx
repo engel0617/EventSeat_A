@@ -121,7 +121,7 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
           .attr("dy", "0.3em")
           .attr("fill", TEXT_COLOR)
           .attr("transform", `rotate(${-1 * (d.rotation || 0)})`) 
-          .style("font-size", "14px")
+          .style("font-size", `${d.fontSize || 14}px`)
           .style("font-weight", "bold")
           .style("pointer-events", "none")
           .text(d.label);
@@ -146,7 +146,8 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
          g.append("text")
           .attr("text-anchor", "middle") .attr("dy", "0.3em") .attr("fill", TEXT_COLOR)
           .attr("transform", `rotate(${-1 * (d.rotation || 0)})`)
-          .style("font-size", "14px") .style("font-weight", "bold") .style("pointer-events", "none")
+          .style("font-size", `${d.fontSize || 14}px`)
+          .style("font-weight", "bold") .style("pointer-events", "none")
           .text(d.label);
 
          const seatCount = d.seats.length;

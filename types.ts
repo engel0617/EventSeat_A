@@ -20,6 +20,7 @@ export interface Table {
   height?: number; // For rectangle
   radius?: number; // For round
   rotation?: number; // Rotation in degrees
+  fontSize?: number; // Font size in pixels
 }
 
 export type RsvpStatus = 'confirmed' | 'pending' | 'declined';

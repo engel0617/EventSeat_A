@@ -5,7 +5,7 @@ import { SeatingCanvas } from './components/SeatingCanvas';
 import { AutoAssignModal } from './components/AutoAssignModal';
 import { SettingsModal } from './components/SettingsModal';
 import { Button } from './components/Button';
-import { Plus, Download, RotateCcw, Layout, Armchair, Trash, Settings2, Sparkles, ArrowRight, Printer, UploadCloud, RotateCw, Scaling, FileSpreadsheet } from 'lucide-react';
+import { Plus, Download, RotateCcw, Layout, Armchair, Trash, Settings2, Sparkles, ArrowRight, Printer, UploadCloud, RotateCw, Scaling, FileSpreadsheet, Type } from 'lucide-react';
 
 // Utility for safe IDs
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -25,6 +25,7 @@ function App() {
   const [mainTableRatio, setMainTableRatio] = useState(20);
   const [defaultRoundSeats, setDefaultRoundSeats] = useState(8);
   const [defaultRectSeats, setDefaultRectSeats] = useState(6);
+  const [defaultFontSize, setDefaultFontSize] = useState(14);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
   // Modals
@@ -41,6 +42,7 @@ function App() {
         shape: TableShape.ROUND,
         radius: 80, // Slightly larger for main example
         rotation: 0,
+        fontSize: 16,
         seats: Array.from({ length: 10 }, (_, i) => ({ id: `t1-${i}`, index: i, guestId: null }))
       },
       {
@@ -51,6 +53,7 @@ function App() {
         shape: TableShape.ROUND,
         radius: 60,
         rotation: 0,
+        fontSize: 14,
         seats: Array.from({ length: 8 }, (_, i) => ({ id: `t2-${i}`, index: i, guestId: null }))
       }
     ]);
@@ -110,6 +113,7 @@ function App() {
       width: shape === TableShape.RECTANGLE ? 140 : undefined,
       height: shape === TableShape.RECTANGLE ? 80 : undefined,
       rotation: 0,
+      fontSize: defaultFontSize,
       seats: Array.from({ length: seatCount }, (_, i) => ({ id: `${id}-${i}`, index: i, guestId: null }))
     };
     setTables([...tables, newTable]);
@@ -381,6 +385,20 @@ function App() {
                            />
                        </div>
 
+                       {/* Font Size Control */}
+                       <div>
+                           <label className="text-xs text-slate-500 block mb-1 flex items-center gap-1"><Type className="w-3 h-3"/> 字體大小</label>
+                           <div className="flex items-center gap-2">
+                              <Button size="sm" variant="secondary" onClick={() => {
+                                  setTables(prev => prev.map(t => t.id === activeTable.id ? {...t, fontSize: Math.max(10, (t.fontSize || 14) - 1)} : t));
+                              }}>-</Button>
+                              <span className="flex-1 text-center text-sm font-medium">{activeTable.fontSize || 14}px</span>
+                              <Button size="sm" variant="secondary" onClick={() => {
+                                  setTables(prev => prev.map(t => t.id === activeTable.id ? {...t, fontSize: Math.min(32, (t.fontSize || 14) + 1)} : t));
+                              }}>+</Button>
+                           </div>
+                       </div>
+
                        {/* Round Table Options */}
                        {activeTable.shape === TableShape.ROUND && (
                           <div>
@@ -496,6 +514,8 @@ function App() {
         setDefaultRoundSeats={setDefaultRoundSeats}
         defaultRectSeats={defaultRectSeats}
         setDefaultRectSeats={setDefaultRectSeats}
+        defaultFontSize={defaultFontSize}
+        setDefaultFontSize={setDefaultFontSize}
       />
     </div>
   );
