@@ -129,10 +129,9 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
   };
 
   const handleDownloadSample = () => {
-    // BOM for Excel to read UTF-8 correctly
-    const bom = "\uFEFF";
+    // Standard UTF-8
     const csvContent = "姓名,分類,RSVP,標籤,避嫌\n王大明,男方親友,已確認,\"素食, VIP\",陳小美\n陳小美,女方親友,未定,伴娘,王大明\n張三,公司同事,已確認,,";
-    const blob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.download = "guest_list_sample.csv";

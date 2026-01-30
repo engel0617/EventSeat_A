@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Button } from './Button';
-import { Settings2, Armchair, Layout, Scaling, BookOpen, MousePointerClick, Users, Sparkles, Download, Save, RotateCw, Type } from 'lucide-react';
+import { Settings2, Armchair, Layout, Scaling, BookOpen, MousePointerClick, Users, Sparkles, Download, Save, RotateCw, Type, CaseSensitive } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -13,6 +13,8 @@ interface SettingsModalProps {
   setDefaultRectSeats: (val: number) => void;
   defaultFontSize: number;
   setDefaultFontSize: (val: number) => void;
+  nameDisplayMode: 'surname' | 'full';
+  setNameDisplayMode: (mode: 'surname' | 'full') => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -26,6 +28,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   setDefaultRectSeats,
   defaultFontSize,
   setDefaultFontSize,
+  nameDisplayMode,
+  setNameDisplayMode,
 }) => {
   const [activeTab, setActiveTab] = useState<'general' | 'guide'>('general');
 
@@ -97,11 +101,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 <div className="border-t border-slate-100"></div>
 
+                {/* Name Display Mode */}
+                <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                        <CaseSensitive className="w-4 h-4 text-slate-500"/>
+                        座位顯示名稱
+                    </label>
+                    <div className="flex gap-2">
+                         <Button 
+                            variant={nameDisplayMode === 'surname' ? 'primary' : 'secondary'} 
+                            onClick={() => setNameDisplayMode('surname')}
+                            className="flex-1"
+                         >
+                            姓氏 (預設)
+                         </Button>
+                         <Button 
+                            variant={nameDisplayMode === 'full' ? 'primary' : 'secondary'} 
+                            onClick={() => setNameDisplayMode('full')}
+                            className="flex-1"
+                         >
+                            全名
+                         </Button>
+                    </div>
+                    <p className="text-xs text-slate-400">
+                        「全名」模式下，中文最多顯示 3 字，英文最多 6 字。
+                    </p>
+                </div>
+
+                <div className="border-t border-slate-100"></div>
+
                 {/* Default Font Size */}
                 <div className="space-y-2">
                       <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
                           <Type className="w-3 h-3 text-slate-500"/>
-                          預設字體大小
+                          預設桌名大小
                       </label>
                       <div className="flex items-center gap-2">
                           <Button variant="secondary" size="sm" onClick={() => setDefaultFontSize(Math.max(10, defaultFontSize - 1))}>-</Button>

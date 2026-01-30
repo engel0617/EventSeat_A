@@ -26,6 +26,7 @@ function App() {
   const [defaultRoundSeats, setDefaultRoundSeats] = useState(8);
   const [defaultRectSeats, setDefaultRectSeats] = useState(6);
   const [defaultFontSize, setDefaultFontSize] = useState(14);
+  const [nameDisplayMode, setNameDisplayMode] = useState<'surname' | 'full'>('surname'); // New state for name display
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
   // Modals
@@ -90,7 +91,7 @@ function App() {
     if (isOverlapping(x, y)) {
        let angle = 0;
        let radius = 50;
-       const maxIter = 500;
+       const maxIter = 2500; // Increased to prevent overlap after many tables
        
        for(let i = 0; i < maxIter; i++) {
           x = cx + radius * Math.cos(angle);
@@ -99,7 +100,7 @@ function App() {
              break;
           }
           angle += 0.5; // ~28 degrees
-          radius += 2; // Expand radius
+          radius += 4; // Expand radius faster
        }
     }
 
@@ -241,7 +242,8 @@ function App() {
         ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(','); // Escape quotes
     });
 
-    const csvContent = "\uFEFF" + [headers.join(','), ...rows].join('\n'); // Add BOM for Excel
+    // Remove BOM for standard UTF-8
+    const csvContent = [headers.join(','), ...rows].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -487,6 +489,7 @@ function App() {
               activeFilterTag={activeFilterTag}
               activeFilterCategory={activeFilterCategory}
               searchTerm={searchTerm}
+              nameDisplayMode={nameDisplayMode}
             />
           </div>
         </main>
@@ -516,6 +519,8 @@ function App() {
         setDefaultRectSeats={setDefaultRectSeats}
         defaultFontSize={defaultFontSize}
         setDefaultFontSize={setDefaultFontSize}
+        nameDisplayMode={nameDisplayMode}
+        setNameDisplayMode={setNameDisplayMode}
       />
     </div>
   );

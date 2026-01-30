@@ -14,6 +14,7 @@ interface SeatingCanvasProps {
   activeFilterTag: string | null;
   activeFilterCategory: string | null;
   searchTerm: string;
+  nameDisplayMode?: 'surname' | 'full'; // Added prop
 }
 
 export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
@@ -28,6 +29,7 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
   activeFilterTag,
   activeFilterCategory,
   searchTerm,
+  nameDisplayMode = 'surname', // Default to surname
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
@@ -41,6 +43,10 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
   const SEAT_STROKE = "#94a3b8";
   const TEXT_COLOR = "#475569";
   const HIGHLIGHT_COLOR = "#facc15";
+  
+  // Overlap warning colors
+  const OVERLAP_FILL = "#fee2e2"; // Red-100
+  const OVERLAP_STROKE = "#ef4444"; // Red-500
 
   useEffect(() => {
     if (!svgRef.current || !gRef.current) return;
@@ -58,6 +64,21 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
   useEffect(() => {
     if (!gRef.current) return;
     const container = d3.select(gRef.current);
+
+    // Calculate overlapping tables
+    const overlapIds = new Set<string>();
+    for (let i = 0; i < tables.length; i++) {
+        for (let j = i + 1; j < tables.length; j++) {
+            const t1 = tables[i];
+            const t2 = tables[j];
+            const dist = Math.sqrt(Math.pow(t1.x - t2.x, 2) + Math.pow(t1.y - t2.y, 2));
+            // Warning threshold for visual overlap
+            if (dist < 160) {
+                overlapIds.add(t1.id);
+                overlapIds.add(t2.id);
+            }
+        }
+    }
 
     const tableGroups = container
       .selectAll<SVGGElement, Table>(".table-group")
@@ -105,21 +126,28 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
     allGroups.each(function(d) {
       const g = d3.select(this);
       const isActive = d.id === activeTableId;
+      const isOverlapping = overlapIds.has(d.id);
       
+      const fillColor = isOverlapping ? OVERLAP_FILL : TABLE_COLOR;
+      const strokeColor = isOverlapping ? OVERLAP_STROKE : (isActive ? "#6366f1" : TABLE_STROKE);
+      const strokeWidth = isActive || isOverlapping ? 3 : 2;
+      const opacity = isOverlapping ? 0.85 : 0.95; // Transparency for overlaps
+
       if (d.shape === TableShape.ROUND) {
         const r = d.radius || 60;
         g.append("circle")
           .attr("r", r)
-          .attr("fill", TABLE_COLOR)
-          .attr("stroke", isActive ? "#6366f1" : TABLE_STROKE) 
-          .attr("stroke-width", isActive ? 3 : 2)
+          .attr("fill", fillColor)
+          .attr("fill-opacity", opacity)
+          .attr("stroke", strokeColor) 
+          .attr("stroke-width", strokeWidth)
           .style("filter", "drop-shadow(0px 2px 4px rgba(0,0,0,0.1))");
         
         // Counter-rotate text so it remains horizontal
         g.append("text")
           .attr("text-anchor", "middle")
           .attr("dy", "0.3em")
-          .attr("fill", TEXT_COLOR)
+          .attr("fill", isOverlapping ? "#991b1b" : TEXT_COLOR) // Dark red text if overlapping
           .attr("transform", `rotate(${-1 * (d.rotation || 0)})`) 
           .style("font-size", `${d.fontSize || 14}px`)
           .style("font-weight", "bold")
@@ -137,14 +165,15 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
         const h = d.height || 80;
         g.append("rect")
           .attr("x", -w/2) .attr("y", -h/2) .attr("width", w) .attr("height", h) .attr("rx", 8)
-          .attr("fill", TABLE_COLOR)
-          .attr("stroke", isActive ? "#6366f1" : TABLE_STROKE)
-          .attr("stroke-width", isActive ? 3 : 2)
+          .attr("fill", fillColor)
+          .attr("fill-opacity", opacity)
+          .attr("stroke", strokeColor)
+          .attr("stroke-width", strokeWidth)
           .style("filter", "drop-shadow(0px 2px 4px rgba(0,0,0,0.1))");
 
          // Counter-rotate text
          g.append("text")
-          .attr("text-anchor", "middle") .attr("dy", "0.3em") .attr("fill", TEXT_COLOR)
+          .attr("text-anchor", "middle") .attr("dy", "0.3em") .attr("fill", isOverlapping ? "#991b1b" : TEXT_COLOR)
           .attr("transform", `rotate(${-1 * (d.rotation || 0)})`)
           .style("font-size", `${d.fontSize || 14}px`)
           .style("font-weight", "bold") .style("pointer-events", "none")
@@ -220,11 +249,27 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
            .attr("stroke-width", ringColor ? 3 : 1);
 
          if (guest) {
+            let textContent = "";
+            let fontSize = "10px";
+
+            if (nameDisplayMode === 'surname') {
+                textContent = guest.name.charAt(0);
+            } else {
+                // Heuristic for CJK vs Latin to determine length limit
+                if (/[\u4e00-\u9fa5]/.test(guest.name)) {
+                   textContent = guest.name.substring(0, 3);
+                   fontSize = textContent.length > 1 ? "8px" : "10px";
+                } else {
+                   textContent = guest.name.substring(0, 6);
+                   fontSize = textContent.length > 2 ? "7px" : "8px"; // Smaller font for longer English names
+                }
+            }
+
            seatG.append("text")
               .attr("text-anchor", "middle") .attr("dy", "0.35em") .attr("fill", "#4f46e5")
               .attr("transform", `rotate(${-1 * tableRotation})`) // Counter-rotate guest name
-              .style("font-size", "10px") .style("font-weight", "bold") .style("pointer-events", "none")
-              .text(guest.name.charAt(0));
+              .style("font-size", fontSize) .style("font-weight", "bold") .style("pointer-events", "none")
+              .text(textContent);
          }
     }
 
@@ -305,7 +350,7 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
             }
         }
     });
-  }, [tables, guests, selectedGuestId, activeTableId, onTableUpdate, onSeatClick, onTableSelect, activeFilterTag, activeFilterCategory, searchTerm]);
+  }, [tables, guests, selectedGuestId, activeTableId, onTableUpdate, onSeatClick, onTableSelect, activeFilterTag, activeFilterCategory, searchTerm, nameDisplayMode]);
 
   return (
     <div className="w-full h-full bg-slate-100 overflow-hidden relative cursor-grab active:cursor-grabbing canvas-container">
