@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { Guest, Table, Seat } from '../types';
+import { Guest, Table } from '../types';
 import { Button } from './Button';
-import { Sparkles, ArrowRight, AlertTriangle, CheckCircle2, XCircle, Users, ShieldAlert } from 'lucide-react';
+import { Sparkles, ArrowRight, CheckCircle2, ShieldAlert, Layers, Tag } from 'lucide-react';
 
 interface AutoAssignModalProps {
   isOpen: boolean;
@@ -30,31 +30,39 @@ export const AutoAssignModal: React.FC<AutoAssignModalProps> = ({
   onApply
 }) => {
   const [step, setStep] = useState<1 | 2>(1);
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [assignMode, setAssignMode] = useState<'category' | 'tag'>('category');
+  const [selectedItems, setSelectedItems] = useState<string[]>([]); // Can be categories or tags
   const [strictMode, setStrictMode] = useState(false); // If true, strictly categorize
   
   // Preview State
   const [previewAssignments, setPreviewAssignments] = useState<Assignment[]>([]);
   const [previewSkipped, setPreviewSkipped] = useState<SkippedGuest[]>([]);
-  const [simulatedTables, setSimulatedTables] = useState<Table[]>([]);
+  const [simulatedTables, setSimulatedTables] = useState<Table[]>([]); // Keep for potential visualization later
 
   // 1. Prepare Data
   const unseatedGuests = useMemo(() => guests.filter(g => !g.assignedSeatId), [guests]);
   
-  const categories = useMemo(() => {
+  const availableCategories = useMemo(() => {
     const cats = new Set<string>();
     unseatedGuests.forEach(g => cats.add(g.category));
     return Array.from(cats);
   }, [unseatedGuests]);
 
+  const availableTags = useMemo(() => {
+    const tags = new Set<string>();
+    unseatedGuests.forEach(g => g.tags.forEach(t => tags.add(t)));
+    return Array.from(tags);
+  }, [unseatedGuests]);
+
   // Initial selection
   React.useEffect(() => {
     if (isOpen && step === 1) {
-      setSelectedCategories(categories);
+      // Reset when opening
+      setSelectedItems(assignMode === 'category' ? availableCategories : availableTags);
       setPreviewAssignments([]);
       setPreviewSkipped([]);
     }
-  }, [isOpen, categories, step]);
+  }, [isOpen, step, assignMode, availableCategories, availableTags]); // Re-run when mode changes to update default selection
 
   if (!isOpen) return null;
 
@@ -65,18 +73,38 @@ export const AutoAssignModal: React.FC<AutoAssignModalProps> = ({
     const assignments: Assignment[] = [];
     const skipped: SkippedGuest[] = [];
 
-    // Filter target guests
-    const targetGuests = unseatedGuests.filter(g => selectedCategories.includes(g.category));
+    // Identify target groups based on mode
+    interface GroupData {
+        key: string;
+        guests: Guest[];
+    }
+    let targetGroups: GroupData[] = [];
+    const processedGuestIds = new Set<string>();
 
-    // Group guests by category
-    const grouped: Record<string, Guest[]> = {};
-    targetGuests.forEach(g => {
-        if(!grouped[g.category]) grouped[g.category] = [];
-        grouped[g.category].push(g);
-    });
+    if (assignMode === 'category') {
+        // Group by Category
+        const grouped: Record<string, Guest[]> = {};
+        unseatedGuests.filter(g => selectedItems.includes(g.category)).forEach(g => {
+            if(!grouped[g.category]) grouped[g.category] = [];
+            grouped[g.category].push(g);
+        });
+        targetGroups = Object.entries(grouped).map(([key, list]) => ({ key, guests: list }));
+    } else {
+        // Group by Tag (A guest might have multiple tags, prioritize based on selection order or size)
+        // Here we iterate selected tags and grab guests who have that tag AND aren't processed yet.
+        selectedItems.forEach(tag => {
+             const guestsWithTag = unseatedGuests.filter(g => 
+                 g.tags.includes(tag) && !processedGuestIds.has(g.id)
+             );
+             if (guestsWithTag.length > 0) {
+                 guestsWithTag.forEach(g => processedGuestIds.add(g.id)); // Mark as grabbed
+                 targetGroups.push({ key: tag, guests: guestsWithTag });
+             }
+        });
+    }
 
-    // Sort categories by group size (Largest first - Greedy approach)
-    const sortedCats = Object.keys(grouped).sort((a, b) => grouped[b].length - grouped[a].length);
+    // Sort groups by size (Largest first - Greedy approach)
+    targetGroups.sort((a, b) => b.guests.length - a.guests.length);
 
     // Helper: Check Conflict
     const hasConflict = (guest: Guest, table: Table): boolean => {
@@ -102,35 +130,45 @@ export const AutoAssignModal: React.FC<AutoAssignModalProps> = ({
     };
 
     // Helper: Find Best Seat
-    const findSeat = (guest: Guest): { table: Table, seatIndex: number } | null => {
-        // Strategy 1: Find table with SAME category guests (Homogeneity)
-        // Sort tables by: Has same category > Most empty space
+    // criteriaKey is the Category Name or Tag Name we are currently trying to group by
+    const findSeat = (guest: Guest, criteriaKey: string): { table: Table, seatIndex: number } | null => {
+        // Strategy: Find table with SAME criteria guests (Homogeneity)
         const sortedTables = [...currentTables].sort((a, b) => {
-            const aHasCat = a.seats.some(s => {
-                 const g = guests.find(x => x.id === s.guestId);
-                 return g?.category === guest.category;
-            });
-            const bHasCat = b.seats.some(s => {
-                 const g = guests.find(x => x.id === s.guestId);
-                 return g?.category === guest.category;
-            });
-            if (aHasCat && !bHasCat) return -1;
-            if (!aHasCat && bHasCat) return 1;
+            // Check affinity based on mode
+            const getAffinity = (tbl: Table) => {
+                return tbl.seats.some(s => {
+                    const g = guests.find(x => x.id === s.guestId); // Check original seated
+                    // Note: Ideally check newly assigned too, but simplifying for performance
+                    if (!g) return false;
+                    if (assignMode === 'category') return g.category === criteriaKey;
+                    return g.tags.includes(criteriaKey);
+                });
+            };
+
+            const aHasAffinity = getAffinity(a);
+            const bHasAffinity = getAffinity(b);
+
+            if (aHasAffinity && !bHasAffinity) return -1;
+            if (!aHasAffinity && bHasAffinity) return 1;
             
-            // Secondary sort: Most empty seats (to keep groups together) or Least empty seats (to fill gaps)?
-            // Let's go with "Fill Gaps" if not strict, but "Most Space" if looking for new table.
-            // Simplified: Sort by number of empty seats descending
+            // Secondary sort: Most empty seats (to keep groups together)
             const aEmpty = a.seats.filter(s => !s.guestId).length;
             const bEmpty = b.seats.filter(s => !s.guestId).length;
             return bEmpty - aEmpty;
         });
 
         for (const table of sortedTables) {
-            // Strict Mode: If table has guests of DIFFERENT category, skip
+            // Strict Mode: If table has guests of DIFFERENT group, skip
             if (strictMode) {
                  const hasDiff = table.seats.some(s => {
                      const g = guests.find(x => x.id === s.guestId);
-                     return g && g.category !== guest.category;
+                     if (!g) return false;
+                     if (assignMode === 'category') return g.category !== criteriaKey;
+                     // Strict mode for tags is tricky (guests have multiple tags). 
+                     // Let's assume strict tag mode means: Table MUST NOT have anyone lacking this tag? 
+                     // Or just skip strict for tags to avoid logic traps. 
+                     // For now, let's apply strictness only if they don't share the tag.
+                     return !g.tags.includes(criteriaKey);
                  });
                  if (hasDiff) continue;
             }
@@ -146,14 +184,13 @@ export const AutoAssignModal: React.FC<AutoAssignModalProps> = ({
     };
 
     // Execute Assignment
-    sortedCats.forEach(cat => {
-        const group = grouped[cat];
-        group.forEach(guest => {
-            const result = findSeat(guest);
+    targetGroups.forEach(group => {
+        group.guests.forEach(guest => {
+            const result = findSeat(guest, group.key);
             if (result) {
                 // Update simulation state
                 const { table, seatIndex } = result;
-                // Mark seat as occupied in currentTables to prevent double booking in loop
+                // Mark seat as occupied in currentTables
                 const tIndex = currentTables.findIndex(t => t.id === table.id);
                 if (tIndex >= 0) {
                      currentTables[tIndex].seats.find(s => s.index === seatIndex)!.guestId = guest.id;
@@ -161,8 +198,6 @@ export const AutoAssignModal: React.FC<AutoAssignModalProps> = ({
                 
                 assignments.push({ guest, table: result.table, seatIndex });
             } else {
-                // Check if skipped due to conflict or space
-                // Simple heuristic: if space exists anywhere but we failed, likely conflict or strict mode
                 const hasSpaceAnywhere = currentTables.some(t => t.seats.some(s => !s.guestId));
                 skipped.push({ 
                     guest, 
@@ -199,7 +234,7 @@ export const AutoAssignModal: React.FC<AutoAssignModalProps> = ({
             智慧批次排位引擎
           </h2>
           <p className="text-indigo-100 text-sm mt-1 opacity-80">
-            基於標籤親密度與衝突規則，自動尋找最佳座位配置。
+            基於分類或標籤親密度與衝突規則，自動尋找最佳座位配置。
           </p>
         </div>
 
@@ -207,31 +242,59 @@ export const AutoAssignModal: React.FC<AutoAssignModalProps> = ({
         <div className="p-6 overflow-y-auto flex-1">
           {step === 1 ? (
             <div className="space-y-6">
+              
+              {/* Mode Toggle */}
+              <div className="flex bg-slate-100 p-1 rounded-lg">
+                  <button 
+                    onClick={() => setAssignMode('category')}
+                    className={`flex-1 py-2 text-sm font-bold rounded-md flex items-center justify-center gap-2 transition-all ${assignMode === 'category' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                      <Layers className="w-4 h-4" /> 依分類 (Category)
+                  </button>
+                  <button 
+                    onClick={() => setAssignMode('tag')}
+                    className={`flex-1 py-2 text-sm font-bold rounded-md flex items-center justify-center gap-2 transition-all ${assignMode === 'tag' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                      <Tag className="w-4 h-4" /> 依標籤 (Tag)
+                  </button>
+              </div>
+
               <div>
                 <h3 className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                  1. 選擇目標群組 ({unseatedGuests.length} 人未入座)
+                  1. 選擇目標{assignMode === 'category' ? '分類' : '標籤'} ({unseatedGuests.length} 人未入座)
                 </h3>
-                <div className="grid grid-cols-2 gap-3">
-                  {categories.map(cat => {
-                    const count = unseatedGuests.filter(g => g.category === cat).length;
-                    const isSelected = selectedCategories.includes(cat);
-                    return (
-                      <div 
-                        key={cat}
-                        onClick={() => setSelectedCategories(prev => 
-                          prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
-                        )}
-                        className={`
-                          cursor-pointer p-3 rounded-lg border flex justify-between items-center transition-all
-                          ${isSelected ? 'bg-indigo-50 border-indigo-500 ring-1 ring-indigo-500' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}
-                        `}
-                      >
-                        <span className="text-sm font-medium text-slate-700">{cat}</span>
-                        <span className="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">{count} 人</span>
-                      </div>
-                    );
-                  })}
-                </div>
+                
+                {/* Selection List */}
+                {(assignMode === 'category' ? availableCategories : availableTags).length === 0 ? (
+                    <div className="text-center py-8 bg-slate-50 rounded-lg border border-dashed border-slate-300 text-slate-400 text-sm">
+                        {assignMode === 'category' ? '沒有可用的分類' : '未入座賓客沒有任何標籤'}
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-2 gap-3 max-h-60 overflow-y-auto pr-2">
+                    {(assignMode === 'category' ? availableCategories : availableTags).map(item => {
+                        const count = assignMode === 'category' 
+                            ? unseatedGuests.filter(g => g.category === item).length
+                            : unseatedGuests.filter(g => g.tags.includes(item)).length;
+                        
+                        const isSelected = selectedItems.includes(item);
+                        return (
+                        <div 
+                            key={item}
+                            onClick={() => setSelectedItems(prev => 
+                            prev.includes(item) ? prev.filter(c => c !== item) : [...prev, item]
+                            )}
+                            className={`
+                            cursor-pointer p-3 rounded-lg border flex justify-between items-center transition-all
+                            ${isSelected ? 'bg-indigo-50 border-indigo-500 ring-1 ring-indigo-500' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}
+                            `}
+                        >
+                            <span className="text-sm font-medium text-slate-700">{item}</span>
+                            <span className="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">{count} 人</span>
+                        </div>
+                        );
+                    })}
+                    </div>
+                )}
               </div>
 
               <div>
@@ -244,9 +307,10 @@ export const AutoAssignModal: React.FC<AutoAssignModalProps> = ({
                       onChange={e => setStrictMode(e.target.checked)}
                     />
                     <div>
-                        <div className="text-sm font-bold text-slate-800">嚴格分類模式 (Strict Mode)</div>
+                        <div className="text-sm font-bold text-slate-800">嚴格分組模式 (Strict Mode)</div>
                         <div className="text-xs text-slate-500 mt-1">
-                            盡量不將不同分類的賓客混在同一桌。可能會導致部分桌次未坐滿。
+                            盡量不將{assignMode === 'category' ? '不同分類' : '不具相同標籤'}的賓客混在同一桌。
+                            可能會導致部分桌次未坐滿。
                         </div>
                     </div>
                  </label>
@@ -301,7 +365,10 @@ export const AutoAssignModal: React.FC<AutoAssignModalProps> = ({
                                    </span>
                                    <div>
                                        <div className="font-medium text-slate-800">{a.guest.name}</div>
-                                       <div className="text-[10px] text-slate-500">{a.guest.category}</div>
+                                       <div className="text-[10px] text-slate-500 flex gap-1">
+                                            <span>{a.guest.category}</span>
+                                            {assignMode === 'tag' && <span className="text-indigo-600 font-bold">• Tag Match</span>}
+                                       </div>
                                    </div>
                                </div>
                                <ArrowRight className="w-3 h-3 text-slate-300" />
@@ -329,7 +396,7 @@ export const AutoAssignModal: React.FC<AutoAssignModalProps> = ({
           {step === 1 ? (
               <Button 
                 onClick={runSimulation} 
-                disabled={selectedCategories.length === 0}
+                disabled={selectedItems.length === 0}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white"
                 icon={<Sparkles className="w-4 h-4 text-yellow-300" />}
               >

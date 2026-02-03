@@ -5,7 +5,7 @@ import { SeatingCanvas } from './components/SeatingCanvas';
 import { AutoAssignModal } from './components/AutoAssignModal';
 import { SettingsModal } from './components/SettingsModal';
 import { Button } from './components/Button';
-import { Plus, Download, RotateCcw, Layout, Armchair, Trash, Settings2, Sparkles, ArrowRight, Printer, UploadCloud, RotateCw, Scaling, FileSpreadsheet, Type } from 'lucide-react';
+import { Plus, Download, RotateCcw, Layout, Armchair, Trash, Settings2, Sparkles, ArrowRight, Printer, UploadCloud, RotateCw, Scaling, FileSpreadsheet, Type, MousePointer2 } from 'lucide-react';
 
 // Utility for safe IDs
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -15,7 +15,10 @@ function App() {
   const [tables, setTables] = useState<Table[]>([]);
   const [guests, setGuests] = useState<Guest[]>([]);
   const [selectedGuestId, setSelectedGuestId] = useState<string | null>(null);
-  const [activeTableId, setActiveTableId] = useState<string | null>(null);
+  
+  // Multi-selection state
+  const [selectedTableIds, setSelectedTableIds] = useState<Set<string>>(new Set());
+
   const [activeFilterTag, setActiveFilterTag] = useState<string | null>(null);
   const [activeFilterCategory, setActiveFilterCategory] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>(''); // Lifted state for search
@@ -118,11 +121,20 @@ function App() {
       seats: Array.from({ length: seatCount }, (_, i) => ({ id: `${id}-${i}`, index: i, guestId: null }))
     };
     setTables([...tables, newTable]);
-    setActiveTableId(id);
+    setSelectedTableIds(new Set([id]));
   };
 
-  const handleUpdateTablePos = useCallback((id: string, x: number, y: number) => {
-    setTables(prev => prev.map(t => t.id === id ? { ...t, x, y } : t));
+  const handleBatchUpdateTablePos = useCallback((updates: {id: string, x: number, y: number}[]) => {
+    setTables(prev => {
+        const newTables = [...prev];
+        updates.forEach(update => {
+            const index = newTables.findIndex(t => t.id === update.id);
+            if (index !== -1) {
+                newTables[index] = { ...newTables[index], x: update.x, y: update.y };
+            }
+        });
+        return newTables;
+    });
   }, []);
 
   const assignGuestToSeat = useCallback((guestId: string, tableId: string, seatIndex: number) => {
@@ -262,7 +274,7 @@ function App() {
         if (json.tables && json.guests) {
           setTables(json.tables);
           setGuests(json.guests);
-          setActiveTableId(null);
+          setSelectedTableIds(new Set());
           setSelectedGuestId(null);
         } else {
           alert("不正確的檔案格式");
@@ -279,8 +291,10 @@ function App() {
     window.print();
   };
 
-  const activeTable = tables.find(t => t.id === activeTableId);
-  const selectedGuest = guests.find(g => g.id === selectedGuestId);
+  // Determine active table for properties panel (Single selection only)
+  const activeTable = selectedTableIds.size === 1 
+      ? tables.find(t => selectedTableIds.has(t.id)) 
+      : null;
 
   // Calculate dynamic radius for main table based on settings
   const standardRadius = 60;
@@ -358,7 +372,7 @@ function App() {
         <main className="flex-1 relative flex flex-col">
           {/* Toolbar */}
           <div className="toolbar absolute top-4 left-4 right-4 z-10 flex justify-center pointer-events-none no-print">
-            <div className="bg-white/90 backdrop-blur p-2 rounded-xl shadow-lg border border-slate-200 flex gap-2 pointer-events-auto">
+            <div className="bg-white/90 backdrop-blur p-2 rounded-xl shadow-lg border border-slate-200 flex gap-2 pointer-events-auto items-center">
               <Button size="sm" variant="secondary" onClick={() => handleAddTable(TableShape.ROUND)}>
                 <div className="w-4 h-4 rounded-full border-2 border-slate-400 mr-2"></div>
                 圓桌
@@ -367,15 +381,41 @@ function App() {
                  <div className="w-4 h-3 border-2 border-slate-400 mr-2"></div>
                 長桌
               </Button>
+              <div className="w-px h-6 bg-slate-300 mx-2"></div>
+              <div className="text-xs text-slate-500 font-medium flex items-center gap-1">
+                 <MousePointer2 className="w-3 h-3" /> 按住 Shift 框選
+              </div>
             </div>
           </div>
 
-          {/* Properties Panel */}
+          {/* Properties Panel (Multi-select View) */}
+          {selectedTableIds.size > 1 && (
+               <div className="properties-panel absolute top-4 right-4 z-10 w-64 bg-white/95 backdrop-blur rounded-xl shadow-lg border border-slate-200 p-4 pointer-events-auto transition-all no-print">
+                   <div className="flex justify-between items-center mb-3">
+                       <h3 className="font-bold text-slate-700 flex items-center gap-2"><Layout className="w-4 h-4" /> 已選取 {selectedTableIds.size} 張桌子</h3>
+                       <button onClick={() => setSelectedTableIds(new Set())} className="text-slate-400 hover:text-slate-600">✕</button>
+                   </div>
+                   <div className="space-y-4">
+                       <p className="text-xs text-slate-500">
+                           您現在可以拖曳移動整批桌子。
+                       </p>
+                       <Button variant="danger" size="sm" className="w-full" onClick={() => {
+                           if(window.confirm(`確定刪除這 ${selectedTableIds.size} 張桌子?`)) {
+                               setTables(prev => prev.filter(t => !selectedTableIds.has(t.id)));
+                               setGuests(prev => prev.map(g => g.assignedSeatId && selectedTableIds.has(g.assignedSeatId.split('-')[0]) ? { ...g, assignedSeatId: null } : g));
+                               setSelectedTableIds(new Set());
+                           }
+                       }} icon={<Trash className="w-4 h-4"/>}>批次刪除</Button>
+                   </div>
+               </div>
+          )}
+
+          {/* Properties Panel (Single Selection) */}
           {activeTable && (
                <div className="properties-panel absolute top-4 right-4 z-10 w-64 bg-white/95 backdrop-blur rounded-xl shadow-lg border border-slate-200 p-4 pointer-events-auto transition-all no-print">
                    <div className="flex justify-between items-center mb-3">
                        <h3 className="font-bold text-slate-700 flex items-center gap-2"><Settings2 className="w-4 h-4" /> 桌次設定</h3>
-                       <button onClick={() => setActiveTableId(null)} className="text-slate-400 hover:text-slate-600">✕</button>
+                       <button onClick={() => setSelectedTableIds(new Set())} className="text-slate-400 hover:text-slate-600">✕</button>
                    </div>
                    <div className="space-y-4">
                        <div>
@@ -452,7 +492,7 @@ function App() {
                               <Button size="sm" variant="secondary" onClick={() => {
                                   if(activeTable.seats.length <= 1) return;
                                   setTables(prev => prev.map(t => {
-                                      if(t.id !== activeTableId) return t;
+                                      if(t.id !== activeTable.id) return t;
                                       const lastSeat = t.seats[t.seats.length - 1];
                                       if(lastSeat.guestId) setGuests(gs => gs.map(g => g.id === lastSeat.guestId ? { ...g, assignedSeatId: null } : g));
                                       return { ...t, seats: t.seats.slice(0, -1) };
@@ -461,16 +501,16 @@ function App() {
                               <span className="flex-1 text-center text-sm font-medium">{activeTable.seats.length}</span>
                               <Button size="sm" variant="secondary" onClick={() => {
                                   setTables(prev => prev.map(t => {
-                                      if(t.id !== activeTableId) return t;
+                                      if(t.id !== activeTable.id) return t;
                                       return { ...t, seats: [...t.seats, { id: `${t.id}-${t.seats.length}`, index: t.seats.length, guestId: null }] };
                                   }));
                               }}>+</Button>
                           </div>
                        </div>
                        <Button variant="danger" size="sm" className="w-full" onClick={() => {
-                            setTables(prev => prev.filter(t => t.id !== activeTableId));
-                            setGuests(prev => prev.map(g => g.assignedSeatId?.startsWith(activeTableId) ? { ...g, assignedSeatId: null } : g));
-                            setActiveTableId(null);
+                            setTables(prev => prev.filter(t => t.id !== activeTable.id));
+                            setGuests(prev => prev.map(g => g.assignedSeatId?.startsWith(activeTable.id) ? { ...g, assignedSeatId: null } : g));
+                            setSelectedTableIds(new Set());
                        }} icon={<Trash className="w-4 h-4"/>}>刪除此桌</Button>
                    </div>
                </div>
@@ -480,11 +520,21 @@ function App() {
             <SeatingCanvas 
               tables={tables} 
               guests={guests}
-              onTableUpdate={handleUpdateTablePos}
+              onTablesUpdate={handleBatchUpdateTablePos}
               onSeatClick={handleSeatClick}
               selectedGuestId={selectedGuestId}
-              onTableSelect={setActiveTableId}
-              activeTableId={activeTableId}
+              onTableSelect={(id, multi) => {
+                  setSelectedTableIds(prev => {
+                      if (multi) {
+                          const next = new Set(prev);
+                          if (next.has(id)) next.delete(id); else next.add(id);
+                          return next;
+                      }
+                      return new Set([id]);
+                  });
+              }}
+              onBoxSelect={(ids) => setSelectedTableIds(ids)}
+              selectedTableIds={selectedTableIds}
               onGuestDrop={handleGuestDrop}
               activeFilterTag={activeFilterTag}
               activeFilterCategory={activeFilterCategory}

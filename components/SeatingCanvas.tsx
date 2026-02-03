@@ -5,35 +5,42 @@ import { Table, TableShape, Seat, Guest } from '../types';
 interface SeatingCanvasProps {
   tables: Table[];
   guests: Guest[];
-  onTableUpdate: (id: string, x: number, y: number) => void;
+  onTablesUpdate: (updates: {id: string, x: number, y: number}[]) => void;
   onSeatClick: (tableId: string, seatIndex: number) => void;
   selectedGuestId: string | null;
-  onTableSelect: (tableId: string) => void;
-  activeTableId: string | null;
+  onTableSelect: (tableId: string, multi: boolean) => void;
+  onBoxSelect: (tableIds: Set<string>) => void;
+  selectedTableIds: Set<string>;
   onGuestDrop: (guestId: string, tableId: string, seatIndex?: number) => void;
   activeFilterTag: string | null;
   activeFilterCategory: string | null;
   searchTerm: string;
-  nameDisplayMode?: 'surname' | 'full'; // Added prop
+  nameDisplayMode?: 'surname' | 'full'; 
 }
 
 export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
   tables,
   guests,
-  onTableUpdate,
+  onTablesUpdate,
   onSeatClick,
   selectedGuestId,
   onTableSelect,
-  activeTableId,
+  onBoxSelect,
+  selectedTableIds,
   onGuestDrop,
   activeFilterTag,
   activeFilterCategory,
   searchTerm,
-  nameDisplayMode = 'surname', // Default to surname
+  nameDisplayMode = 'surname', 
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
+  const selectionRectRef = useRef<SVGRectElement>(null);
   const [transform, setTransform] = useState<d3.ZoomTransform>(d3.zoomIdentity);
+  
+  // Ref to track current selection during drag (to avoid stale closures)
+  const selectedTableIdsRef = useRef(selectedTableIds);
+  useEffect(() => { selectedTableIdsRef.current = selectedTableIds; }, [selectedTableIds]);
 
   const SEAT_RADIUS = 12;
   const TABLE_COLOR = "#ffffff";
@@ -44,22 +51,85 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
   const TEXT_COLOR = "#475569";
   const HIGHLIGHT_COLOR = "#facc15";
   
-  // Overlap warning colors
-  const OVERLAP_FILL = "#fee2e2"; // Red-100
-  const OVERLAP_STROKE = "#ef4444"; // Red-500
+  const OVERLAP_FILL = "#fee2e2"; 
+  const OVERLAP_STROKE = "#ef4444"; 
 
   useEffect(() => {
     if (!svgRef.current || !gRef.current) return;
     const svg = d3.select(svgRef.current);
     const g = d3.select(gRef.current);
+    
+    // Zoom Behavior
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 4])
+      .filter((event) => !event.shiftKey) // Disable zoom when shift is pressed (for selection)
       .on("zoom", (event) => {
         g.attr("transform", event.transform);
         setTransform(event.transform);
       });
     svg.call(zoom);
-  }, []);
+
+    // Box Selection Behavior (Brush-like)
+    let startX = 0;
+    let startY = 0;
+
+    const dragSelection = d3.drag<SVGSVGElement, unknown>()
+        .filter(event => event.shiftKey && !event.target.closest('.table-group')) // Only on bg + shift
+        .on("start", (event) => {
+             // Use svgRef for screen coordinates to draw the rectangle
+             const [x, y] = d3.pointer(event, svgRef.current); 
+             startX = x;
+             startY = y;
+             d3.select(selectionRectRef.current)
+                .attr("x", x).attr("y", y).attr("width", 0).attr("height", 0)
+                .style("display", "block");
+        })
+        .on("drag", (event) => {
+             const [x, y] = d3.pointer(event, svgRef.current);
+             const width = Math.abs(x - startX);
+             const height = Math.abs(y - startY);
+             const newX = x < startX ? x : startX;
+             const newY = y < startY ? y : startY;
+
+             d3.select(selectionRectRef.current)
+                .attr("x", newX).attr("y", newY)
+                .attr("width", width).attr("height", height);
+        })
+        .on("end", (event) => {
+             d3.select(selectionRectRef.current).style("display", "none");
+             const [x, y] = d3.pointer(event, svgRef.current);
+             const width = Math.abs(x - startX);
+             const height = Math.abs(y - startY);
+             const boxX = x < startX ? x : startX;
+             const boxY = y < startY ? y : startY;
+             const boxX2 = boxX + width;
+             const boxY2 = boxY + height;
+
+             // Get current transform to convert screen box to world coordinates
+             const t = d3.zoomTransform(svgRef.current as Element);
+             
+             // Invert screen coordinates to world coordinates
+             const [worldX1, worldY1] = t.invert([boxX, boxY]);
+             const [worldX2, worldY2] = t.invert([boxX2, boxY2]);
+
+             // Find intersection in world space
+             const newSelection = new Set<string>();
+             
+             // If "Add to selection" behavior is desired for Shift+Drag, uncomment below:
+             // selectedTableIdsRef.current.forEach(id => newSelection.add(id));
+             
+             tables.forEach(table => {
+                 // Check if table center is within the world-space box
+                 if (table.x >= worldX1 && table.x <= worldX2 && table.y >= worldY1 && table.y <= worldY2) {
+                     newSelection.add(table.id);
+                 }
+             });
+             onBoxSelect(newSelection);
+        });
+
+    svg.call(dragSelection);
+
+  }, [tables]); // Re-bind if tables change significantly
 
   useEffect(() => {
     if (!gRef.current) return;
@@ -72,7 +142,6 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
             const t1 = tables[i];
             const t2 = tables[j];
             const dist = Math.sqrt(Math.pow(t1.x - t2.x, 2) + Math.pow(t1.y - t2.y, 2));
-            // Warning threshold for visual overlap
             if (dist < 160) {
                 overlapIds.add(t1.id);
                 overlapIds.add(t2.id);
@@ -89,7 +158,10 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
       .attr("class", "table-group")
       .attr("cursor", "move")
       .on("click", (e, d) => {
-        if (!e.defaultPrevented) onTableSelect(d.id);
+        if (!e.defaultPrevented) {
+             e.stopPropagation();
+             onTableSelect(d.id, e.shiftKey);
+        }
       });
 
     enterGroups.on("dragover", (event) => event.preventDefault())
@@ -102,36 +174,80 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
 
     const allGroups = enterGroups.merge(tableGroups);
 
+    // Update Drag Behavior for Multi-Select
     const drag = d3.drag<SVGGElement, Table>()
       .subject(function(d) { return { x: d.x, y: d.y }; })
-      .filter((event) => !event.target.closest(".seat-node"))
+      .filter((event) => !event.target.closest(".seat-node") && !event.shiftKey) // Don't drag if seat click or shift-selecting
       .on("start", function(event, d) {
         d3.select(this).attr("cursor", "grabbing").raise();
-        onTableSelect(d.id);
+        // If dragging an unselected table, select it first (clearing others)
+        if (!selectedTableIdsRef.current.has(d.id)) {
+            onTableSelect(d.id, false);
+        }
       })
       .on("drag", function(event, d) {
-        // Apply both translation and rotation during drag to prevent jumping
-        d3.select(this).attr("transform", `translate(${event.x}, ${event.y}) rotate(${d.rotation || 0})`);
+        const dx = event.dx;
+        const dy = event.dy;
+        
+        // Move visual elements immediately for all selected tables
+        const currentSelected = selectedTableIdsRef.current.has(d.id) 
+            ? selectedTableIdsRef.current 
+            : new Set([d.id]); // Fallback
+
+        currentSelected.forEach(id => {
+             // Find DOM element for this table ID
+             const el = container.selectAll<SVGGElement, Table>(".table-group").filter(t => t.id === id);
+             el.each(function(t) {
+                 t.x += dx;
+                 t.y += dy;
+                 d3.select(this).attr("transform", `translate(${t.x}, ${t.y}) rotate(${t.rotation || 0})`);
+             });
+        });
       })
       .on("end", function(event, d) {
         d3.select(this).attr("cursor", "move");
-        onTableUpdate(d.id, event.x, event.y);
+        
+        // Collect all updates
+        const updates: {id: string, x: number, y: number}[] = [];
+        const currentSelected = selectedTableIdsRef.current.has(d.id) 
+            ? selectedTableIdsRef.current 
+            : new Set([d.id]);
+            
+        currentSelected.forEach(id => {
+             const t = tables.find(tbl => tbl.id === id);
+             if (t) {
+                 // The 't' object was mutated during drag (d3 data binding), read new vals
+                 updates.push({ id, x: t.x, y: t.y });
+             }
+        });
+        onTablesUpdate(updates);
       });
 
     allGroups.call(drag);
-    // Apply initial transform with rotation
     allGroups.attr("transform", d => `translate(${d.x}, ${d.y}) rotate(${d.rotation || 0})`);
     allGroups.selectAll("*").remove(); 
 
     allGroups.each(function(d) {
       const g = d3.select(this);
-      const isActive = d.id === activeTableId;
+      const isSelected = selectedTableIds.has(d.id);
       const isOverlapping = overlapIds.has(d.id);
       
       const fillColor = isOverlapping ? OVERLAP_FILL : TABLE_COLOR;
-      const strokeColor = isOverlapping ? OVERLAP_STROKE : (isActive ? "#6366f1" : TABLE_STROKE);
-      const strokeWidth = isActive || isOverlapping ? 3 : 2;
-      const opacity = isOverlapping ? 0.85 : 0.95; // Transparency for overlaps
+      // Blue selection stroke
+      const strokeColor = isOverlapping ? OVERLAP_STROKE : (isSelected ? "#6366f1" : TABLE_STROKE);
+      const strokeWidth = isSelected || isOverlapping ? 3 : 2;
+      const opacity = isOverlapping ? 0.85 : 0.95; 
+
+      // If selected, add a subtle glow/shadow ring
+      if (isSelected) {
+          g.append("circle")
+           .attr("r", (d.shape === TableShape.ROUND ? (d.radius || 60) : Math.max(d.width||140, d.height||80)/2) + 10)
+           .attr("fill", "none")
+           .attr("stroke", "#818cf8")
+           .attr("stroke-width", 1)
+           .attr("stroke-dasharray", "4,4")
+           .attr("opacity", 0.6);
+      }
 
       if (d.shape === TableShape.ROUND) {
         const r = d.radius || 60;
@@ -143,11 +259,10 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
           .attr("stroke-width", strokeWidth)
           .style("filter", "drop-shadow(0px 2px 4px rgba(0,0,0,0.1))");
         
-        // Counter-rotate text so it remains horizontal
         g.append("text")
           .attr("text-anchor", "middle")
           .attr("dy", "0.3em")
-          .attr("fill", isOverlapping ? "#991b1b" : TEXT_COLOR) // Dark red text if overlapping
+          .attr("fill", isOverlapping ? "#991b1b" : TEXT_COLOR) 
           .attr("transform", `rotate(${-1 * (d.rotation || 0)})`) 
           .style("font-size", `${d.fontSize || 14}px`)
           .style("font-weight", "bold")
@@ -171,7 +286,6 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
           .attr("stroke-width", strokeWidth)
           .style("filter", "drop-shadow(0px 2px 4px rgba(0,0,0,0.1))");
 
-         // Counter-rotate text
          g.append("text")
           .attr("text-anchor", "middle") .attr("dy", "0.3em") .attr("fill", isOverlapping ? "#991b1b" : TEXT_COLOR)
           .attr("transform", `rotate(${-1 * (d.rotation || 0)})`)
@@ -198,7 +312,6 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
          let opacity = 1;
          let ringColor = null;
 
-         // Check filters (Tag and Search and Category)
          if (activeFilterTag || searchTerm || activeFilterCategory) {
             let isMatch = false;
             
@@ -255,19 +368,18 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
             if (nameDisplayMode === 'surname') {
                 textContent = guest.name.charAt(0);
             } else {
-                // Heuristic for CJK vs Latin to determine length limit
                 if (/[\u4e00-\u9fa5]/.test(guest.name)) {
                    textContent = guest.name.substring(0, 3);
                    fontSize = textContent.length > 1 ? "8px" : "10px";
                 } else {
                    textContent = guest.name.substring(0, 6);
-                   fontSize = textContent.length > 2 ? "7px" : "8px"; // Smaller font for longer English names
+                   fontSize = textContent.length > 2 ? "7px" : "8px"; 
                 }
             }
 
            seatG.append("text")
               .attr("text-anchor", "middle") .attr("dy", "0.35em") .attr("fill", "#4f46e5")
-              .attr("transform", `rotate(${-1 * tableRotation})`) // Counter-rotate guest name
+              .attr("transform", `rotate(${-1 * tableRotation})`) 
               .style("font-size", fontSize) .style("font-weight", "bold") .style("pointer-events", "none")
               .text(textContent);
          }
@@ -279,8 +391,6 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
     if(conflictG.empty()) conflictG = container.append("g").attr("class", "conflict-group").attr("pointer-events", "none");
     conflictG.selectAll("*").remove();
     
-    // For conflict lines, we need absolute world coordinates.
-    // Since tables are now rotated, we must apply rotation math to find seat positions.
     const seatPositions = new Map<string, {x: number, y: number}>();
     
     const toRadians = (deg: number) => deg * Math.PI / 180;
@@ -304,14 +414,9 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
           const seatDist = r + SEAT_RADIUS + 5;
           d.seats.forEach((seat, i) => {
              const angle = (i * 2 * Math.PI) / d.seats.length - Math.PI / 2;
-             // Local position relative to table center (0,0)
              const lx = Math.cos(angle) * seatDist;
              const ly = Math.sin(angle) * seatDist;
-             
-             // Rotate local position
              const rotated = rotatePoint(lx, ly, 0, 0, rotation);
-             
-             // Add to table absolute position
              seatPositions.set(seat.id, { x: d.x + rotated.x, y: d.y + rotated.y });
           });
        } else {
@@ -322,7 +427,6 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
              const step = w / ((isTop ? topCount : (d.seats.length - topCount)) + 1);
              const lx = -w/2 + step * ((isTop ? i : i - topCount) + 1);
              const ly = isTop ? (-h/2 - SEAT_RADIUS - 5) : (h/2 + SEAT_RADIUS + 5);
-             
              const rotated = rotatePoint(lx, ly, 0, 0, rotation);
              seatPositions.set(seat.id, { 
                x: d.x + rotated.x, 
@@ -350,7 +454,7 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
             }
         }
     });
-  }, [tables, guests, selectedGuestId, activeTableId, onTableUpdate, onSeatClick, onTableSelect, activeFilterTag, activeFilterCategory, searchTerm, nameDisplayMode]);
+  }, [tables, guests, selectedGuestId, selectedTableIds, onTablesUpdate, onSeatClick, onTableSelect, activeFilterTag, activeFilterCategory, searchTerm, nameDisplayMode]);
 
   return (
     <div className="w-full h-full bg-slate-100 overflow-hidden relative cursor-grab active:cursor-grabbing canvas-container">
@@ -361,7 +465,10 @@ export const SeatingCanvas: React.FC<SeatingCanvasProps> = ({
                transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.k})`
              }}>
         </div>
-      <svg ref={svgRef} className="w-full h-full"><g ref={gRef} /></svg>
+      <svg ref={svgRef} className="w-full h-full">
+          <g ref={gRef} />
+          <rect ref={selectionRectRef} fill="rgba(99, 102, 241, 0.2)" stroke="#6366f1" strokeDasharray="4,2" style={{display: 'none'}} pointerEvents="none" />
+      </svg>
       <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur p-3 rounded-lg shadow-sm border border-slate-200 text-xs text-slate-500 pointer-events-none no-print">
         <div className="flex items-center gap-2 mb-1"><span className="w-3 h-3 rounded-full bg-slate-100 border border-slate-400"></span> 空位</div>
         <div className="flex items-center gap-2 mb-1"><span className="w-3 h-3 rounded-full bg-indigo-200 border border-slate-400"></span> 已入座</div>

@@ -204,7 +204,11 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
     else if (filterMode === 'pending') matchesMode = g.rsvpStatus === 'pending';
     else if (filterMode === 'unassigned') matchesMode = !g.assignedSeatId && g.rsvpStatus !== 'declined';
 
-    return matchesSearch && matchesMode;
+    // Strict filtering for tags and categories
+    const matchesTag = !activeFilterTag || g.tags.includes(activeFilterTag);
+    const matchesCategory = !activeFilterCategory || g.category === activeFilterCategory;
+
+    return matchesSearch && matchesMode && matchesTag && matchesCategory;
   });
 
   const getRsvpIcon = (status: RsvpStatus) => {
@@ -357,9 +361,6 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
                   const assignedTable = guest.assignedSeatId 
                     ? tables.find(t => t.id === guest.assignedSeatId?.split('-')[0]) 
                     : null;
-
-                  const isDimmed = (activeFilterTag && !guest.tags.includes(activeFilterTag)) || 
-                                   (activeFilterCategory && guest.category !== activeFilterCategory);
                   
                   return (
                     <div
@@ -375,7 +376,6 @@ export const GuestSidebar: React.FC<GuestSidebarProps> = ({
                         }
                         ${selectedGuestId === guest.id ? 'ring-2 ring-indigo-500 border-indigo-500 bg-indigo-50 !opacity-100' : ''}
                         ${guest.rsvpStatus === 'declined' ? 'opacity-50 grayscale' : ''}
-                        ${isDimmed ? 'opacity-20' : ''}
                       `}
                     >
                       {/* Drag Handle Indicator */}
